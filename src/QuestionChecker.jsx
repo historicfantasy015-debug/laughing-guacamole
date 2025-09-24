@@ -117,7 +117,6 @@ const QuestionChecker = () => {
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const handleCheckQuestion = async (questionId) => {
   const handleCheckQuestion = async (questionId, isAutoCheck = false) => {
     const question = questions.find(q => q.id === questionId);
     if (!question) return;
