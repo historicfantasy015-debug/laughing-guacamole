@@ -1,11 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const API_KEYS = [
-  "AIzaSyD-QBs4BulS_1jf3IYDfVGAs8zHuLOAOJM",
-  "AIzaSyBhE2iTl1P0JuAyjoFGd7fDpBYUmJWS4EQ",
-  "AIzaSyD6RG-whtz_4C56HCshnIUU0T9YWXtnILE",
-  "AIzaSyBgJTsx6fYq5l4L0jTsRdpMuCbi19dBJyk",
-  "AIzaSyD7aHqF3EVskQIH7zcXdij4NVmUaskK0kw",
+  "AIzaSyB9QDIoLmfWnQI9Qy9PXGeeNvNyESLWMr0",
+  "AIzaSyAAk-o1ZQIxHos0ixXdm59qt8jOOEsc_0M",
+  "AIzaSyBZcxKcFkMLUBXtYRp5UHoXwGB5mQ1MJVI",
+  "AIzaSyDc60zrn69_ofEXMdU4gCOT5QUphrPgiBM",
+  "AIzaSyAmh6oy770fHumwmpE7_tyT1cjwiV4jtcA",
   "AIzaSyAIb8_yMe4eBJi0zM-ltIr36VpbIYBrduE",
   "AIzaSyDtYCBEUhsJQoOYtT8AUOHGlicNYyyvdZw",
   "AIzaSyD4C7drU0i3yg9vCx_UyN1kgYaNWnV3K4E",
@@ -50,7 +50,7 @@ async function makeGeminiRequest(prompt, maxRetries = API_KEYS.length) {
       console.log(`Attempt ${attempt + 1}/${maxRetries} with API key #${currentKeyIndex}`);
 
       const result = await model.generateContent(prompt);
-      const response = result.response.text().trim().toUpperCase();
+      const response = result.response.text().trim();
 
       return response;
 
@@ -71,7 +71,7 @@ async function makeGeminiRequest(prompt, maxRetries = API_KEYS.length) {
 }
 
 async function checkQuestionWithGemini(question) {
-  const { question_statement, options, question_type } = question;
+  const { question_statement, options, question_type, answer } = question;
 
   let optionsArray = [];
   try {
@@ -96,65 +96,192 @@ async function checkQuestionWithGemini(question) {
 
     switch (question_type) {
       case "MCQ":
-      case "MSQ":
         if (optionsArray.length === 0) {
-          console.warn('No options found for MCQ/MSQ question, marking as wrong');
+          console.warn('No options found for MCQ question, marking as wrong');
           return true;
         }
 
-        prompt = `You are an expert question validator. Analyze this multiple-choice question and determine if it's correctly formulated.
+        prompt = `You are a strict academic question validator. Your job is to verify if this Multiple Choice Question (MCQ) is CORRECTLY formulated with EXACTLY ONE correct answer.
 
 Question: ${question_statement}
 
 Options:
 ${optionsArray.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('\n')}
 
-Instructions:
-1. Solve the question step by step
-2. Determine the correct answer(s)
-3. Check if the correct answer(s) exist among the given options
-4. Respond with only "CORRECT" if the question is properly formulated and has the right answer(s) in the options
-5. Respond with only "WRONG" if the question is incorrectly formulated, unsolvable, or the correct answer is not among the options strictly don't give approximations if you think it's genuine answer belongs in these options then only validate that question 
+CRITICAL VALIDATION RULES FOR MCQ:
+1. An MCQ must have EXACTLY ONE correct answer. If there are ZERO correct answers OR MORE THAN ONE correct answer, it is WRONG.
+2. Solve the question completely and rigorously using proper academic methods.
+3. Verify each option carefully - check if it's correct or incorrect.
+4. Count how many options are correct.
+5. The question is WRONG if:
+   - No correct answer exists in the options
+   - More than one option is correct
+   - The question statement is ambiguous, unclear, or contains errors
+   - The question is unsolvable with the given information
+   - Options contain errors or are poorly worded
+   - The correct mathematical/scientific answer is NOT present in the options
+6. The question is CORRECT only if:
+   - Exactly ONE option is the correct answer
+   - The question is clearly stated and solvable
+   - All options are properly formatted
+   - The correct answer is definitively present
+
+RESPONSE FORMAT:
+Line 1: "VERDICT: CORRECT" or "VERDICT: WRONG"
+Line 2: "CORRECT_OPTIONS_COUNT: [number]"
+Line 3-5: Brief explanation of your reasoning
 
 Your response:`;
 
         const mcqResponse = await makeGeminiRequest(prompt);
-        return mcqResponse.includes("WRONG");
+        console.log('MCQ Response:', mcqResponse);
 
-      case "NAT":
-        prompt = `You are an expert question validator. Analyze this numerical answer type question.
+        const lines = mcqResponse.split('\n');
+        const verdictLine = lines.find(l => l.includes('VERDICT:'));
+        const countLine = lines.find(l => l.includes('CORRECT_OPTIONS_COUNT:'));
+
+        if (countLine) {
+          const match = countLine.match(/CORRECT_OPTIONS_COUNT:\s*(\d+)/i);
+          if (match) {
+            const correctCount = parseInt(match[1]);
+            if (correctCount !== 1) {
+              console.log(`MCQ marked as WRONG: Found ${correctCount} correct options instead of exactly 1`);
+              return true;
+            }
+          }
+        }
+
+        const isWrong = verdictLine && verdictLine.toUpperCase().includes('WRONG');
+        return isWrong;
+
+      case "MSQ":
+        if (optionsArray.length === 0) {
+          console.warn('No options found for MSQ question, marking as wrong');
+          return true;
+        }
+
+        prompt = `You are a strict academic question validator. Your job is to verify if this Multiple Select Question (MSQ) is CORRECTLY formulated with AT LEAST ONE correct answer.
 
 Question: ${question_statement}
 
-Instructions:
-1. Solve the question step by step
-2. Determine if the question has a valid numerical answer
-3. Check if the question is properly formulated for numerical response
-4. Respond with only "CORRECT" if the question is properly formulated and has a valid numerical answer
-5. Respond with only "WRONG" if the question is incorrectly formulated, unsolvable, or doesn't have a numerical answer
+Options:
+${optionsArray.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('\n')}
+
+CRITICAL VALIDATION RULES FOR MSQ:
+1. An MSQ can have one or more correct answers (but at least ONE must be correct).
+2. Solve the question completely and rigorously using proper academic methods.
+3. Verify each option carefully - check if it's correct or incorrect.
+4. Count how many options are correct.
+5. The question is WRONG if:
+   - No correct answer exists in the options
+   - The question statement is ambiguous, unclear, or contains errors
+   - The question is unsolvable with the given information
+   - Options contain errors or are poorly worded
+   - The mathematically/scientifically correct answers are NOT present in the options
+6. The question is CORRECT only if:
+   - At least one option is correct
+   - The question is clearly stated and solvable
+   - All options are properly formatted
+   - All correct answers are definitively present
+
+RESPONSE FORMAT:
+Line 1: "VERDICT: CORRECT" or "VERDICT: WRONG"
+Line 2: "CORRECT_OPTIONS_COUNT: [number]"
+Line 3-5: Brief explanation of your reasoning
+
+Your response:`;
+
+        const msqResponse = await makeGeminiRequest(prompt);
+        console.log('MSQ Response:', msqResponse);
+
+        const msqLines = msqResponse.split('\n');
+        const msqVerdictLine = msqLines.find(l => l.includes('VERDICT:'));
+        const msqCountLine = msqLines.find(l => l.includes('CORRECT_OPTIONS_COUNT:'));
+
+        if (msqCountLine) {
+          const match = msqCountLine.match(/CORRECT_OPTIONS_COUNT:\s*(\d+)/i);
+          if (match) {
+            const correctCount = parseInt(match[1]);
+            if (correctCount === 0) {
+              console.log(`MSQ marked as WRONG: Found 0 correct options`);
+              return true;
+            }
+          }
+        }
+
+        const msqIsWrong = msqVerdictLine && msqVerdictLine.toUpperCase().includes('WRONG');
+        return msqIsWrong;
+
+      case "NAT":
+        prompt = `You are a strict academic question validator. Your job is to verify if this Numerical Answer Type (NAT) question is CORRECTLY formulated.
+
+Question: ${question_statement}
+
+CRITICAL VALIDATION RULES FOR NAT:
+1. Solve the question completely using rigorous mathematical/scientific methods.
+2. Verify that a specific numerical answer can be calculated.
+3. The question is WRONG if:
+   - The question is ambiguous or unclear
+   - Missing critical information needed to solve
+   - Contains mathematical/scientific errors
+   - Cannot be solved to get a specific numerical value
+   - The solution requires assumptions not stated in the question
+   - Units are inconsistent or missing when required
+4. The question is CORRECT only if:
+   - Can be solved to get a specific numerical answer
+   - All necessary information is provided
+   - Question is clearly stated
+   - Mathematically/scientifically sound
+
+RESPONSE FORMAT:
+Line 1: "VERDICT: CORRECT" or "VERDICT: WRONG"
+Line 2: "NUMERICAL_ANSWER: [your calculated answer]" (if solvable)
+Line 3-5: Brief explanation of your reasoning
 
 Your response:`;
 
         const natResponse = await makeGeminiRequest(prompt);
-        return natResponse.includes("WRONG");
+        console.log('NAT Response:', natResponse);
+
+        const natLines = natResponse.split('\n');
+        const natVerdictLine = natLines.find(l => l.includes('VERDICT:'));
+        const natIsWrong = natVerdictLine && natVerdictLine.toUpperCase().includes('WRONG');
+        return natIsWrong;
 
       case "SUB":
       case "Subjective":
-        prompt = `You are an expert question validator. Analyze this subjective question.
+        prompt = `You are a strict academic question validator. Your job is to verify if this Subjective question is CORRECTLY formulated.
 
 Question: ${question_statement}
 
-Instructions:
-1. Analyze if the question is clearly stated and answerable
-2. Check if a coherent proof or detailed answer can be constructed
-3. Determine if the question has sufficient information for a complete response
-4. Respond with only "CORRECT" if the question is properly formulated and answerable
-5. Respond with only "WRONG" if the question is ambiguous, ill-posed, or cannot be answered properly
+CRITICAL VALIDATION RULES FOR SUBJECTIVE:
+1. Analyze if the question is clearly stated and answerable.
+2. Check if sufficient information is provided for a complete answer.
+3. The question is WRONG if:
+   - The question is ambiguous, vague, or unclear
+   - Missing critical context or information
+   - Contains errors or contradictions
+   - Too broad or impossible to answer definitively
+   - Poorly worded or grammatically incorrect
+4. The question is CORRECT only if:
+   - Clearly stated and unambiguous
+   - Can be answered with a coherent explanation/proof
+   - All necessary context is provided
+   - Academically sound and meaningful
+
+RESPONSE FORMAT:
+Line 1: "VERDICT: CORRECT" or "VERDICT: WRONG"
+Line 2-4: Brief explanation of your reasoning
 
 Your response:`;
 
         const subResponse = await makeGeminiRequest(prompt);
-        return subResponse.includes("WRONG");
+        console.log('SUB Response:', subResponse);
+
+        const subLines = subResponse.split('\n');
+        const subVerdictLine = subLines.find(l => l.includes('VERDICT:'));
+        const subIsWrong = subVerdictLine && subVerdictLine.toUpperCase().includes('WRONG');
+        return subIsWrong;
 
       default:
         console.warn(`Unknown question type: ${question_type}. Marking as wrong by default.`);
