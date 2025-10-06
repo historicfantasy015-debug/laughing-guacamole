@@ -151,23 +151,30 @@ const QuestionChecker = () => {
 
     } catch (err) {
       console.error(`Error checking question ${questionId}:`, err);
-      
-      setQuestions(prev => prev.map(q => 
+
+      setQuestions(prev => prev.map(q =>
         q.id === questionId ? { ...q, is_wrong: true, check_error: true } : q
       ));
-      
+
       if (isAutoCheck) {
         setAutoCheckStats(prev => ({
           ...prev,
           processed: prev.processed + 1,
           errors: prev.errors + 1
         }));
-        
-        // Wait 30 seconds before continuing with next question
-        console.log('Error occurred, waiting 30 seconds before continuing...');
-        await sleep(30000);
+
+        if (err.isRateLimit) {
+          const waitTime = err.retryAfter || 30000;
+          console.log(`Rate limit hit, waiting ${Math.ceil(waitTime / 1000)} seconds before continuing...`);
+          setError(`Rate limit exceeded. Waiting ${Math.ceil(waitTime / 1000)}s before continuing...`);
+          await sleep(waitTime);
+          setError(null);
+        } else {
+          console.log('Error occurred, waiting 10 seconds before continuing...');
+          await sleep(10000);
+        }
       } else {
-        setError(`Failed to check question. Please check your Gemini API key and try again.`);
+        setError(err.message || 'Failed to check question. Please try again.');
       }
     } finally {
       setCheckingQuestions(prev => {

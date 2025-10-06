@@ -4,9 +4,25 @@ const API_KEY = "AIzaSyB9QDIoLmfWnQI9Qy9PXGeeNvNyESLWMr0";
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 6500;
+
+async function waitForRateLimit() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+    console.log(`Rate limiting: waiting ${Math.ceil(waitTime / 1000)}s before next request...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+
+  lastRequestTime = Date.now();
+}
+
 async function checkQuestionWithGemini(question) {
   const { question_statement, options, question_type } = question;
-  
+
   // Enhanced options parsing with error handling
   let optionsArray = [];
   try {
@@ -25,6 +41,8 @@ async function checkQuestionWithGemini(question) {
     console.warn('Error parsing options, using as single option:', parseError);
     optionsArray = [String(options || '')];
   }
+
+  await waitForRateLimit();
 
   try {
     let prompt = "";
@@ -101,17 +119,22 @@ Your response:`;
     }
   } catch (error) {
     console.error("Error checking question with Gemini:", error);
-    
-    // Enhanced error handling for different types of errors
-    if (error.message?.includes('quota') || error.message?.includes('rate limit')) {
-      throw new Error('API quota exceeded or rate limited. Please wait before retrying.');
+
+    if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit')) {
+      const retryMatch = error.message?.match(/retry in ([\d.]+)s/);
+      const retryDelay = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 30;
+
+      const rateLimitError = new Error(`Rate limit exceeded. Retry in ${retryDelay} seconds.`);
+      rateLimitError.retryAfter = retryDelay * 1000;
+      rateLimitError.isRateLimit = true;
+      throw rateLimitError;
     } else if (error.message?.includes('API key')) {
       throw new Error('Invalid API key. Please check your Gemini API configuration.');
     } else if (error.message?.includes('network') || error.message?.includes('fetch')) {
       throw new Error('Network error. Please check your internet connection.');
     }
-    
-    throw error; // Re-throw to handle in the calling function
+
+    throw error;
   }
 }
 
