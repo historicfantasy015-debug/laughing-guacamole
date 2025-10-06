@@ -6,11 +6,11 @@ const API_KEYS = [
   "AIzaSyBZcxKcFkMLUBXtYRp5UHoXwGB5mQ1MJVI",
   "AIzaSyDc60zrn69_ofEXMdU4gCOT5QUphrPgiBM",
   "AIzaSyAmh6oy770fHumwmpE7_tyT1cjwiV4jtcA",
-  "AIzaSyAIb8_yMe4eBJi0zM-ltIr36VpbIYBrduE",
-  "AIzaSyDtYCBEUhsJQoOYtT8AUOHGlicNYyyvdZw",
-  "AIzaSyD4C7drU0i3yg9vCx_UyN1kgYaNWnV3K4E",
-  "AIzaSyCLaG3KK6BpziM1Uj57Ja9GfnOnqi1o4s8",
-  "AIzaSyBHBIe0n4-7tCjfPsRVgNYgUQOznFHfMHw"
+  "AIzaSyBGmJySiyngEnM42xm9AmaLW740EGd6IiA",
+  "AIzaSyBzNyuYJmHg21U971-mKkwFG9eyrrnS3WY",
+  "AIzaSyAo6eVQmkYXoyTXOEqyh4GI8QavY9njqHw",
+  "AIzaSyATElhVEnr5Fwnu4J1Ig-yotMLw6gnuxeA",
+  "AIzaSyD6RG-whtz_4C56HCshnIUU0T9YWXtnILE"
 ];
 
 let currentKeyIndex = 0;
