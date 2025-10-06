@@ -114,7 +114,7 @@ Instructions:
 2. Determine the correct answer(s)
 3. Check if the correct answer(s) exist among the given options
 4. Respond with only "CORRECT" if the question is properly formulated and has the right answer(s) in the options
-5. Respond with only "WRONG" if the question is incorrectly formulated, unsolvable, or the correct answer is not among the options
+5. Respond with only "WRONG" if the question is incorrectly formulated, unsolvable, or the correct answer is not among the options strictly don't give approximations if you think it's genuine answer belongs in these options then only validate that question 
 
 Your response:`;
 
