@@ -9,7 +9,7 @@ import {
 import Button from './Button';
 
 const QuestionCard = ({ question, onCheck, isChecking, disabled = false }) => {
-  const { question_statement, options, question_type, is_wrong, check_error } = question;
+  const { question_statement, options, question_type, is_wrong, check_error, recheck_count } = question;
 
   const statusIcon = () => {
     if (isChecking) {
@@ -80,6 +80,11 @@ const QuestionCard = ({ question, onCheck, isChecking, disabled = false }) => {
         <div>
           <span className="text-sm font-semibold text-primary uppercase tracking-wider">{question_type}</span>
           <p className="text-xs text-textSecondary">{getQuestionTypeDescription(question_type)}</p>
+          {recheck_count > 0 && (
+            <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+              Rechecked {recheck_count}x
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {statusIcon()}

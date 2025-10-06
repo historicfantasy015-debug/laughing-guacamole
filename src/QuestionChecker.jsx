@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './api/supabase';
 import { checkQuestionWithGemini } from './api/gemini';
 import QuestionCard from './components/QuestionCard';
 import Button from './components/Button';
-import { ArrowPathIcon, PlayIcon, PauseIcon, StopIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, PlayIcon, PauseIcon, StopIcon, ArrowUturnLeftIcon } from '@heroicons/react/24/outline';
 import { ExclamationCircleIcon } from '@heroicons/react/24/solid';
 
 const QuestionChecker = () => {
@@ -21,16 +21,18 @@ const QuestionChecker = () => {
     wrong: 0,
     errors: 0
   });
+  const [isRechecking, setIsRechecking] = useState(false);
+  const processingRef = useRef(false);
 
   useEffect(() => {
     fetchQuestions();
   }, []);
 
   useEffect(() => {
-    if (autoChecking && !autoCheckPaused && questions.length > 0) {
+    if (autoChecking && !autoCheckPaused && !processingRef.current) {
       processNextQuestion();
     }
-  }, [autoChecking, autoCheckPaused, currentAutoCheckIndex, questions]);
+  }, [autoChecking, autoCheckPaused, currentAutoCheckIndex]);
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -42,11 +44,11 @@ const QuestionChecker = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      
+
       const parsedData = data.map(q => ({
         ...q,
-        options: q.options ? (typeof q.options === 'string' ? 
-          (q.options.trim().startsWith('[') ? JSON.parse(q.options) : [q.options]) : 
+        options: q.options ? (typeof q.options === 'string' ?
+          (q.options.trim().startsWith('[') ? JSON.parse(q.options) : [q.options]) :
           (Array.isArray(q.options) ? q.options : [q.options])
         ) : []
       }));
@@ -69,6 +71,7 @@ const QuestionChecker = () => {
     setAutoChecking(true);
     setAutoCheckPaused(false);
     setCurrentAutoCheckIndex(0);
+    setIsRechecking(false);
     setAutoCheckStats({
       total: uncheckedQuestions.length,
       processed: 0,
@@ -77,6 +80,28 @@ const QuestionChecker = () => {
       errors: 0
     });
     setError(null);
+    processingRef.current = false;
+  };
+
+  const startRecheck = () => {
+    if (questions.length === 0) {
+      setError('No questions found to recheck.');
+      return;
+    }
+
+    setAutoChecking(true);
+    setAutoCheckPaused(false);
+    setCurrentAutoCheckIndex(0);
+    setIsRechecking(true);
+    setAutoCheckStats({
+      total: questions.length,
+      processed: 0,
+      correct: 0,
+      wrong: 0,
+      errors: 0
+    });
+    setError(null);
+    processingRef.current = false;
   };
 
   const pauseAutoCheck = () => {
@@ -92,54 +117,69 @@ const QuestionChecker = () => {
     setAutoCheckPaused(false);
     setCurrentAutoCheckIndex(0);
     setCheckingQuestions(new Set());
+    setIsRechecking(false);
+    processingRef.current = false;
   };
 
   const processNextQuestion = async () => {
-    if (autoCheckPaused || !autoChecking) return;
+    if (autoCheckPaused || !autoChecking || processingRef.current) {
+      return;
+    }
 
-    const uncheckedQuestions = questions.filter(q => q.is_wrong === null || q.is_wrong === undefined);
-    
-    if (currentAutoCheckIndex >= uncheckedQuestions.length) {
-      // All questions processed
+    const questionsToCheck = isRechecking
+      ? questions
+      : questions.filter(q => q.is_wrong === null || q.is_wrong === undefined);
+
+    if (currentAutoCheckIndex >= questionsToCheck.length) {
       setAutoChecking(false);
       setAutoCheckPaused(false);
       setCurrentAutoCheckIndex(0);
       setCheckingQuestions(new Set());
+      setIsRechecking(false);
+      processingRef.current = false;
       setError(`Auto-check completed! Processed ${autoCheckStats.total} questions: ${autoCheckStats.correct} correct, ${autoCheckStats.wrong} wrong, ${autoCheckStats.errors} errors.`);
       return;
     }
 
-    const currentQuestion = uncheckedQuestions[currentAutoCheckIndex];
-    if (!currentQuestion) return;
+    const currentQuestion = questionsToCheck[currentAutoCheckIndex];
+    if (!currentQuestion) {
+      setCurrentAutoCheckIndex(prev => prev + 1);
+      return;
+    }
 
+    processingRef.current = true;
     await handleCheckQuestion(currentQuestion.id, true);
-  };
+    processingRef.current = false;
 
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    setCurrentAutoCheckIndex(prev => prev + 1);
+  };
 
   const handleCheckQuestion = async (questionId, isAutoCheck = false) => {
     const question = questions.find(q => q.id === questionId);
     if (!question) return;
 
     setCheckingQuestions(prev => new Set([...prev, questionId]));
-    
+
     try {
       const isWrong = await checkQuestionWithGemini(question);
-      
-      // Update Supabase
+
+      const newRecheckCount = (question.recheck_count || 0) + (isRechecking ? 1 : 0);
+
       const { error: updateError } = await supabase
         .from('new_questions')
-        .update({ is_wrong: isWrong })
+        .update({
+          is_wrong: isWrong,
+          recheck_count: newRecheckCount,
+          status: isRechecking ? String(newRecheckCount) : question.status
+        })
         .eq('id', questionId);
 
       if (updateError) throw updateError;
 
-      // Update local state
-      setQuestions(prev => prev.map(q => 
-        q.id === questionId ? { ...q, is_wrong: isWrong, check_error: false } : q
+      setQuestions(prev => prev.map(q =>
+        q.id === questionId ? { ...q, is_wrong: isWrong, check_error: false, recheck_count: newRecheckCount } : q
       ));
 
-      // Update auto-check stats
       if (isAutoCheck) {
         setAutoCheckStats(prev => ({
           ...prev,
@@ -163,16 +203,9 @@ const QuestionChecker = () => {
           errors: prev.errors + 1
         }));
 
-        if (err.isRateLimit) {
-          const waitTime = err.retryAfter || 30000;
-          console.log(`Rate limit hit, waiting ${Math.ceil(waitTime / 1000)} seconds before continuing...`);
-          setError(`Rate limit exceeded. Waiting ${Math.ceil(waitTime / 1000)}s before continuing...`);
-          await sleep(waitTime);
-          setError(null);
-        } else {
-          console.log('Error occurred, waiting 10 seconds before continuing...');
-          await sleep(10000);
-        }
+        setError(`Error on question ${autoCheckStats.processed + 1}: ${err.message}. Continuing...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        setError(null);
       } else {
         setError(err.message || 'Failed to check question. Please try again.');
       }
@@ -182,11 +215,6 @@ const QuestionChecker = () => {
         newSet.delete(questionId);
         return newSet;
       });
-      
-      // Move to next question in auto-check mode
-      if (isAutoCheck && autoChecking) {
-        setCurrentAutoCheckIndex(prev => prev + 1);
-      }
     }
   };
 
@@ -214,6 +242,13 @@ const QuestionChecker = () => {
   const checkedCount = questions.length - uncheckedCount;
   const correctCount = questions.filter(q => q.is_wrong === false).length;
   const wrongCount = questions.filter(q => q.is_wrong === true).length;
+  const recheckStats = {
+    total: questions.length,
+    recheck0: questions.filter(q => !q.recheck_count || q.recheck_count === 0).length,
+    recheck1: questions.filter(q => q.recheck_count === 1).length,
+    recheck2: questions.filter(q => q.recheck_count === 2).length,
+    recheck3Plus: questions.filter(q => q.recheck_count >= 3).length
+  };
 
   return (
     <div className="container mx-auto p-4 max-w-7xl mt-8">
@@ -221,9 +256,9 @@ const QuestionChecker = () => {
         <div>
           <h2 className="text-3xl md:text-4xl font-bold text-text text-center md:text-left">Question Checker</h2>
           <p className="text-textSecondary mt-2">
-            {autoChecking 
-              ? `Auto-checking in progress... (${autoCheckStats.processed}/${autoCheckStats.total})`
-              : 'Use auto-check or manually validate questions with Gemini AI'
+            {autoChecking
+              ? `${isRechecking ? 'Rechecking' : 'Auto-checking'} in progress... (${autoCheckStats.processed}/${autoCheckStats.total})`
+              : 'Use auto-check or recheck to validate questions with Gemini AI'
             }
           </p>
         </div>
@@ -237,6 +272,14 @@ const QuestionChecker = () => {
               >
                 <PlayIcon className="h-5 w-5 mr-2" />
                 Auto Check ({uncheckedCount})
+              </Button>
+              <Button
+                onClick={startRecheck}
+                disabled={questions.length === 0}
+                className="px-6 py-3 text-lg bg-blue-600 hover:bg-blue-700"
+              >
+                <ArrowUturnLeftIcon className="h-5 w-5 mr-2" />
+                Recheck All ({questions.length})
               </Button>
               <Button
                 onClick={fetchQuestions}
@@ -277,7 +320,6 @@ const QuestionChecker = () => {
         </div>
       </div>
 
-      {/* Statistics Panel */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8 animate-fade-in-up delay-400">
         <div className="bg-surface p-4 rounded-xl text-center">
           <div className="text-2xl font-bold text-text">{questions.length}</div>
@@ -301,17 +343,37 @@ const QuestionChecker = () => {
         </div>
       </div>
 
-      {/* Auto-check Progress */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 animate-fade-in-up delay-450">
+        <div className="bg-surface p-4 rounded-xl text-center border-2 border-blue-500/30">
+          <div className="text-2xl font-bold text-blue-600">{recheckStats.recheck0}</div>
+          <div className="text-sm text-textSecondary">Never Rechecked</div>
+        </div>
+        <div className="bg-surface p-4 rounded-xl text-center border-2 border-green-500/30">
+          <div className="text-2xl font-bold text-green-600">{recheckStats.recheck1}</div>
+          <div className="text-sm text-textSecondary">Rechecked 1x</div>
+        </div>
+        <div className="bg-surface p-4 rounded-xl text-center border-2 border-yellow-500/30">
+          <div className="text-2xl font-bold text-yellow-600">{recheckStats.recheck2}</div>
+          <div className="text-sm text-textSecondary">Rechecked 2x</div>
+        </div>
+        <div className="bg-surface p-4 rounded-xl text-center border-2 border-orange-500/30">
+          <div className="text-2xl font-bold text-orange-600">{recheckStats.recheck3Plus}</div>
+          <div className="text-sm text-textSecondary">Rechecked 3x+</div>
+        </div>
+      </div>
+
       {autoChecking && (
         <div className="bg-surface p-6 rounded-xl mb-8 animate-fade-in-up">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-semibold text-text">Auto-Check Progress</h3>
+            <h3 className="text-xl font-semibold text-text">
+              {isRechecking ? 'Recheck Progress' : 'Auto-Check Progress'}
+            </h3>
             <div className="text-sm text-textSecondary">
               {autoCheckPaused ? 'Paused' : 'Running'}
             </div>
           </div>
           <div className="w-full bg-background rounded-full h-3 mb-4">
-            <div 
+            <div
               className="bg-primary h-3 rounded-full transition-all duration-300"
               style={{ width: `${(autoCheckStats.processed / autoCheckStats.total) * 100}%` }}
             ></div>
@@ -339,8 +401,8 @@ const QuestionChecker = () => {
 
       {error && (
         <div className={`border rounded-xl p-4 mb-6 animate-fade-in-up ${
-          error.includes('completed') 
-            ? 'bg-success/10 border-success/20 text-success' 
+          error.includes('completed')
+            ? 'bg-success/10 border-success/20 text-success'
             : 'bg-error/10 border-error/20 text-error'
         }`}>
           <p className="text-center">{error}</p>
@@ -358,8 +420,8 @@ const QuestionChecker = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {questions.map((question) => (
-          <QuestionCard 
-            key={question.id} 
+          <QuestionCard
+            key={question.id}
             question={question}
             onCheck={() => handleCheckQuestion(question.id)}
             isChecking={checkingQuestions.has(question.id)}

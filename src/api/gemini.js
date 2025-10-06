@@ -1,11 +1,27 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const API_KEY = "AIzaSyB9QDIoLmfWnQI9Qy9PXGeeNvNyESLWMr0";
-const genAI = new GoogleGenerativeAI(API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+const API_KEYS = [
+  "AIzaSyB9QDIoLmfWnQI9Qy9PXGeeNvNyESLWMr0",
+  "AIzaSyAAk-o1ZQIxHos0ixXdm59qt8jOOEsc_0M",
+  "AIzaSyBZcxKcFkMLUBXtYRp5UHoXwGB5mQ1MJVI",
+  "AIzaSyDc60zrn69_ofEXMdU4gCOT5QUphrPgiBM",
+  "AIzaSyAmh6oy770fHumwmpE7_tyT1cjwiV4jtcA",
+  "AIzaSyAIb8_yMe4eBJi0zM-ltIr36VpbIYBrduE",
+  "AIzaSyDtYCBEUhsJQoOYtT8AUOHGlicNYyyvdZw",
+  "AIzaSyD4C7drU0i3yg9vCx_UyN1kgYaNWnV3K4E",
+  "AIzaSyCLaG3KK6BpziM1Uj57Ja9GfnOnqi1o4s8",
+  "AIzaSyBHBIe0n4-7tCjfPsRVgNYgUQOznFHfMHw"
+];
 
+let currentKeyIndex = 0;
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL = 6500;
+
+function getNextAPIKey() {
+  const key = API_KEYS[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+  return key;
+}
 
 async function waitForRateLimit() {
   const now = Date.now();
@@ -20,10 +36,43 @@ async function waitForRateLimit() {
   lastRequestTime = Date.now();
 }
 
+async function makeGeminiRequest(prompt, maxRetries = API_KEYS.length) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await waitForRateLimit();
+
+      const apiKey = getNextAPIKey();
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+      console.log(`Attempt ${attempt + 1}/${maxRetries} with API key #${currentKeyIndex}`);
+
+      const result = await model.generateContent(prompt);
+      const response = result.response.text().trim().toUpperCase();
+
+      return response;
+
+    } catch (error) {
+      lastError = error;
+      console.warn(`API key #${currentKeyIndex} failed:`, error.message);
+
+      if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit')) {
+        console.log(`API key #${currentKeyIndex} hit rate limit, switching to next key...`);
+        continue;
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(`All API keys exhausted. Last error: ${lastError?.message || 'Unknown error'}`);
+}
+
 async function checkQuestionWithGemini(question) {
   const { question_statement, options, question_type } = question;
 
-  // Enhanced options parsing with error handling
   let optionsArray = [];
   try {
     if (Array.isArray(options)) {
@@ -42,11 +91,8 @@ async function checkQuestionWithGemini(question) {
     optionsArray = [String(options || '')];
   }
 
-  await waitForRateLimit();
-
   try {
     let prompt = "";
-    let result;
 
     switch (question_type) {
       case "MCQ":
@@ -55,7 +101,7 @@ async function checkQuestionWithGemini(question) {
           console.warn('No options found for MCQ/MSQ question, marking as wrong');
           return true;
         }
-        
+
         prompt = `You are an expert question validator. Analyze this multiple-choice question and determine if it's correctly formulated.
 
 Question: ${question_statement}
@@ -71,9 +117,8 @@ Instructions:
 5. Respond with only "WRONG" if the question is incorrectly formulated, unsolvable, or the correct answer is not among the options
 
 Your response:`;
-        
-        result = await model.generateContent(prompt);
-        const mcqResponse = result.response.text().trim().toUpperCase();
+
+        const mcqResponse = await makeGeminiRequest(prompt);
         return mcqResponse.includes("WRONG");
 
       case "NAT":
@@ -89,9 +134,8 @@ Instructions:
 5. Respond with only "WRONG" if the question is incorrectly formulated, unsolvable, or doesn't have a numerical answer
 
 Your response:`;
-        
-        result = await model.generateContent(prompt);
-        const natResponse = result.response.text().trim().toUpperCase();
+
+        const natResponse = await makeGeminiRequest(prompt);
         return natResponse.includes("WRONG");
 
       case "SUB":
@@ -108,9 +152,8 @@ Instructions:
 5. Respond with only "WRONG" if the question is ambiguous, ill-posed, or cannot be answered properly
 
 Your response:`;
-        
-        result = await model.generateContent(prompt);
-        const subResponse = result.response.text().trim().toUpperCase();
+
+        const subResponse = await makeGeminiRequest(prompt);
         return subResponse.includes("WRONG");
 
       default:
@@ -119,21 +162,6 @@ Your response:`;
     }
   } catch (error) {
     console.error("Error checking question with Gemini:", error);
-
-    if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit')) {
-      const retryMatch = error.message?.match(/retry in ([\d.]+)s/);
-      const retryDelay = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 30;
-
-      const rateLimitError = new Error(`Rate limit exceeded. Retry in ${retryDelay} seconds.`);
-      rateLimitError.retryAfter = retryDelay * 1000;
-      rateLimitError.isRateLimit = true;
-      throw rateLimitError;
-    } else if (error.message?.includes('API key')) {
-      throw new Error('Invalid API key. Please check your Gemini API configuration.');
-    } else if (error.message?.includes('network') || error.message?.includes('fetch')) {
-      throw new Error('Network error. Please check your internet connection.');
-    }
-
     throw error;
   }
 }
