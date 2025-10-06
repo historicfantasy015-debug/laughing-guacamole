@@ -3,9 +3,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 const API_KEYS = [
   "AIzaSyD-QBs4BulS_1jf3IYDfVGAs8zHuLOAOJM",
   "AIzaSyBhE2iTl1P0JuAyjoFGd7fDpBYUmJWS4EQ",
-  "AIzaSyBZcxKcFkMLUBXtYRp5UHoXwGB5mQ1MJVI",
-  "AIzaSyDc60zrn69_ofEXMdU4gCOT5QUphrPgiBM",
-  "AIzaSyAmh6oy770fHumwmpE7_tyT1cjwiV4jtcA",
+  "AIzaSyD6RG-whtz_4C56HCshnIUU0T9YWXtnILE",
+  "AIzaSyBgJTsx6fYq5l4L0jTsRdpMuCbi19dBJyk",
+  "AIzaSyD7aHqF3EVskQIH7zcXdij4NVmUaskK0kw",
   "AIzaSyAIb8_yMe4eBJi0zM-ltIr36VpbIYBrduE",
   "AIzaSyDtYCBEUhsJQoOYtT8AUOHGlicNYyyvdZw",
   "AIzaSyD4C7drU0i3yg9vCx_UyN1kgYaNWnV3K4E",
