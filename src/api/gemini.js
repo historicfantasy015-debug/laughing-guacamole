@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const API_KEYS = [
-  "AIzaSyB9QDIoLmfWnQI9Qy9PXGeeNvNyESLWMr0",
-  "AIzaSyAAk-o1ZQIxHos0ixXdm59qt8jOOEsc_0M",
+  "AIzaSyD-QBs4BulS_1jf3IYDfVGAs8zHuLOAOJM",
+  "AIzaSyBhE2iTl1P0JuAyjoFGd7fDpBYUmJWS4EQ",
   "AIzaSyBZcxKcFkMLUBXtYRp5UHoXwGB5mQ1MJVI",
   "AIzaSyDc60zrn69_ofEXMdU4gCOT5QUphrPgiBM",
   "AIzaSyAmh6oy770fHumwmpE7_tyT1cjwiV4jtcA",
