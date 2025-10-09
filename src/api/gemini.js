@@ -1,26 +1,84 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { supabase } from "./supabase";
 
-const API_KEYS = [
-  "AIzaSyB9QDIoLmfWnQI9Qy9PXGeeNvNyESLWMr0",
-  "AIzaSyAAk-o1ZQIxHos0ixXdm59qt8jOOEsc_0M",
-  "AIzaSyBZcxKcFkMLUBXtYRp5UHoXwGB5mQ1MJVI",
-  "AIzaSyDc60zrn69_ofEXMdU4gCOT5QUphrPgiBM",
-  "AIzaSyAmh6oy770fHumwmpE7_tyT1cjwiV4jtcA",
-  "AIzaSyBGmJySiyngEnM42xm9AmaLW740EGd6IiA",
-  "AIzaSyBzNyuYJmHg21U971-mKkwFG9eyrrnS3WY",
-  "AIzaSyAo6eVQmkYXoyTXOEqyh4GI8QavY9njqHw",
-  "AIzaSyATElhVEnr5Fwnu4J1Ig-yotMLw6gnuxeA",
-  "AIzaSyD6RG-whtz_4C56HCshnIUU0T9YWXtnILE"
-];
-
+let apiKeysCache = [];
+let lastKeysFetch = 0;
+const KEYS_CACHE_DURATION = 60000;
 let currentKeyIndex = 0;
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL = 6500;
 
-function getNextAPIKey() {
-  const key = API_KEYS[currentKeyIndex];
-  currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
-  return key;
+async function fetchAPIKeys() {
+  const now = Date.now();
+
+  if (apiKeysCache.length > 0 && (now - lastKeysFetch) < KEYS_CACHE_DURATION) {
+    return apiKeysCache;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('gemini_api_keys')
+      .select('id, api_key')
+      .eq('is_active', true)
+      .order('last_used_at', { ascending: true, nullsFirst: true });
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      console.error('No active API keys found in database!');
+      return [];
+    }
+
+    apiKeysCache = data;
+    lastKeysFetch = now;
+    console.log(`Loaded ${data.length} active API keys from database`);
+    return data;
+  } catch (error) {
+    console.error('Error fetching API keys:', error);
+    return apiKeysCache;
+  }
+}
+
+async function getNextAPIKey() {
+  const keys = await fetchAPIKeys();
+
+  if (keys.length === 0) {
+    throw new Error('No API keys available. Please add API keys in the settings.');
+  }
+
+  const keyData = keys[currentKeyIndex % keys.length];
+  currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+
+  await supabase
+    .from('gemini_api_keys')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('id', keyData.id);
+
+  return keyData;
+}
+
+async function updateKeyErrorCount(keyId, increment = true) {
+  try {
+    if (increment) {
+      const { data } = await supabase
+        .from('gemini_api_keys')
+        .select('error_count')
+        .eq('id', keyId)
+        .single();
+
+      await supabase
+        .from('gemini_api_keys')
+        .update({ error_count: (data?.error_count || 0) + 1 })
+        .eq('id', keyId);
+    } else {
+      await supabase
+        .from('gemini_api_keys')
+        .update({ error_count: 0 })
+        .eq('id', keyId);
+    }
+  } catch (error) {
+    console.error('Error updating key error count:', error);
+  }
 }
 
 async function waitForRateLimit() {
@@ -36,30 +94,48 @@ async function waitForRateLimit() {
   lastRequestTime = Date.now();
 }
 
-async function makeGeminiRequest(prompt, maxRetries = API_KEYS.length) {
+async function makeGeminiRequest(prompt) {
+  const keys = await fetchAPIKeys();
+
+  if (keys.length === 0) {
+    throw new Error('No API keys available. Please add API keys in the settings.');
+  }
+
+  const maxRetries = keys.length * 2;
   let lastError = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let keyData = null;
+
     try {
       await waitForRateLimit();
 
-      const apiKey = getNextAPIKey();
-      const genAI = new GoogleGenerativeAI(apiKey);
+      keyData = await getNextAPIKey();
+      const genAI = new GoogleGenerativeAI(keyData.api_key);
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-      console.log(`Attempt ${attempt + 1}/${maxRetries} with API key #${currentKeyIndex}`);
+      console.log(`Attempt ${attempt + 1}/${maxRetries} with API key ID: ${keyData.id.substring(0, 8)}...`);
 
       const result = await model.generateContent(prompt);
       const response = result.response.text().trim();
+
+      await updateKeyErrorCount(keyData.id, false);
 
       return response;
 
     } catch (error) {
       lastError = error;
-      console.warn(`API key #${currentKeyIndex} failed:`, error.message);
+      console.warn(`API key ${keyData?.id.substring(0, 8)}... failed:`, error.message);
+
+      if (keyData) {
+        await updateKeyErrorCount(keyData.id, true);
+      }
 
       if (error.status === 429 || error.message?.includes('quota') || error.message?.includes('rate limit')) {
-        console.log(`API key #${currentKeyIndex} hit rate limit, switching to next key...`);
+        console.log(`API key hit rate limit, switching to next key...`);
+        continue;
+      } else if (error.message?.includes('API key')) {
+        console.log(`API key invalid, switching to next key...`);
         continue;
       } else {
         throw error;
@@ -67,7 +143,7 @@ async function makeGeminiRequest(prompt, maxRetries = API_KEYS.length) {
     }
   }
 
-  throw new Error(`All API keys exhausted. Last error: ${lastError?.message || 'Unknown error'}`);
+  throw new Error(`All API keys exhausted after ${maxRetries} attempts. Last error: ${lastError?.message || 'Unknown error'}`);
 }
 
 async function checkQuestionWithGemini(question) {
@@ -293,4 +369,4 @@ Your response:`;
   }
 }
 
-export { checkQuestionWithGemini };
+export { checkQuestionWithGemini, fetchAPIKeys };
